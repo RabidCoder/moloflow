@@ -41,7 +41,6 @@ INSTALLED_APPS = [
     # Local apps
     'core',
     'invoices',
-    'users',
 ]
 
 MIDDLEWARE = [
