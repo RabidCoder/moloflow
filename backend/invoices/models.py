@@ -1,21 +1,59 @@
+from django.core.validators import MinValueValidator
 from django.db import models
 
+from core.constants import NAME_UNIT_MAX_LENGTH, NAME_MAX_LENGTH, SYMBOL_MAX_LENGTH
 from core.utils import invoice_file_path
+
+
+class InvoiceVersion(models.Model):
+    """Model representing a version of an invoice."""
+
+    invoice = models.ForeignKey(
+        "Invoice",
+        on_delete=models.CASCADE,
+        related_name="versions",
+        help_text="The invoice to which this version belongs.",
+    )
+    version = models.PositiveIntegerField(help_text="Version number of the invoice.")
+    created_at = models.DateTimeField(
+        auto_now_add=True, help_text="Timestamp when this version was created."
+    )
+    file = models.FileField(
+        "file",
+        upload_to=invoice_file_path,
+        blank=True,
+        null=True,
+        help_text="Uploaded invoice file (excel).",
+    )
+
+    class Meta:
+        verbose_name = "invoice version"
+        verbose_name_plural = "invoice versions"
+        unique_together = ("invoice", "version")
+        ordering = ["-version"]
+
+    def __str__(self) -> str:
+        return f"Invoice #{self.invoice.number} - Version {self.version}"
 
 
 class Invoice(models.Model):
     """Model representing an invoice."""
 
     number = models.IntegerField(
-        "number", unique=True, help_text="Unique invoice number as shown on the document."
+        "number",
+        unique=True,
+        validators=[MinValueValidator(1)],
+        help_text="Unique invoice number as shown on the document.",
     )
     date = models.DateField("date", help_text="Date of the invoice.")
-    file = models.FileField(
-        "file",
-        upload_to=invoice_file_path,
-        blank=True,
+    active_version = models.ForeignKey(
+        InvoiceVersion,
+        on_delete=models.SET_NULL,
         null=True,
-        help_text="Original invoice file (Excel) saved for parsing and verification.",
+        blank=True,
+        verbose_name="active version",
+        related_name="active_for_invoice",
+        help_text="The currently active version of the invoice.",
     )
 
     class Meta:
@@ -23,15 +61,19 @@ class Invoice(models.Model):
         verbose_name_plural = "invoices"
         ordering = ["-date"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Invoice #{self.number} from {self.date}"
 
 
 class Unit(models.Model):
     """Model representing a measurement unit."""
 
-    name = models.CharField("name", max_length=20, help_text="Name of the unit (e.g., 'kilogram').")
-    symbol = models.CharField("symbol", max_length=10, help_text="Symbol of the unit (e.g., 'kg').")
+    name = models.CharField(
+        "name", max_length=NAME_UNIT_MAX_LENGTH, help_text="Name of the unit (e.g., 'kilogram')."
+    )
+    symbol = models.CharField(
+        "symbol", max_length=SYMBOL_MAX_LENGTH, help_text="Symbol of the unit (e.g., 'kg')."
+    )
     aliases = models.JSONField(
         "aliases",
         default=list,
@@ -44,18 +86,21 @@ class Unit(models.Model):
         verbose_name_plural = "units"
         ordering = ["name"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} ({self.symbol})"
 
 
 class InvoiceItem(models.Model):
     """Model representing an item in an invoice."""
 
-    name = models.CharField("name", max_length=100, help_text="Item name as shown in the invoice.")
+    name = models.CharField(
+        "name", max_length=NAME_MAX_LENGTH, help_text="Item name as shown in the invoice."
+    )
     quantity = models.DecimalField(
         "quantity",
         max_digits=10,
         decimal_places=2,
+        validators=[MinValueValidator(0.01)],
         help_text="Quantity of the item in the specified unit, with up to two decimal places.",
     )
     unit = models.ForeignKey(
@@ -67,8 +112,8 @@ class InvoiceItem(models.Model):
         related_name="used_in_items",
         help_text="Measurement unit of the item. Can be empty if not recognized.",
     )
-    invoice = models.ForeignKey(
-        Invoice,
+    version = models.ForeignKey(
+        InvoiceVersion,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -82,5 +127,5 @@ class InvoiceItem(models.Model):
         verbose_name_plural = "invoice items"
         ordering = ["-invoice__date", "name"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
