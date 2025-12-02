@@ -49,7 +49,7 @@ class Invoice(models.Model):
     date = models.DateField("date", help_text="Date of the invoice.")
     active_version = models.ForeignKey(
         InvoiceVersion,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         verbose_name="active version",
@@ -135,7 +135,7 @@ class InvoiceItem(models.Model):
     )
     unit = models.ForeignKey(
         Unit,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         verbose_name="unit",
@@ -144,7 +144,7 @@ class InvoiceItem(models.Model):
     )
     version = models.ForeignKey(
         InvoiceVersion,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         verbose_name="invoice",
