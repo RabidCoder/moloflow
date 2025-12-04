@@ -1,9 +1,80 @@
-from django.core.validators import MinValueValidator
+from datetime import timezone
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 from core.constants import NAME_UNIT_MAX_LENGTH, NAME_MAX_LENGTH, SYMBOL_MAX_LENGTH
 from core.validators import validate_invoice_file
 from core.utils import invoice_file_path
+
+
+class ReportMonth(models.Model):
+    """Model representing a reporting month."""
+
+    year = models.IntegerField(
+        validators=[MinValueValidator(2000)], help_text="Year of the report month."
+    )
+    month = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        help_text="Month of the report month.",
+    )
+    is_closed = models.BooleanField(
+        default=False, help_text="Indicates whether the report month is closed."
+    )
+    closed_at = models.DateTimeField(
+        null=True, blank=True, help_text="Timestamp when the report month was closed."
+    )
+
+    class Meta:
+        verbose_name = "report month"
+        verbose_name_plural = "report months"
+        unique_together = ("year", "month")
+        ordering = ["-year", "-month"]
+
+    def clean(self):
+        super().clean()
+
+        today = timezone.now()
+        current_year = today.year
+        current_month = today.month
+        # Prevent setting a report month in the past
+        if (self.year < current_year) or (self.year == current_year and self.month < current_month):
+            raise ValidationError("Report month cannot be in the past.")
+        # Prevent duplicate report months
+        if (
+            ReportMonth.objects.exclude(pk=self.pk)
+            .filter(year=self.year, month=self.month)
+            .exists()
+        ):
+            raise ValidationError("Report month for this year and month already exists.")
+        # Prevent modifications if the report month is closed
+        if self.pk:
+            old = ReportMonth.objects.get(pk=self.pk)
+            if old.is_closed and (self.year != old.year or self.month != old.month):
+                raise ValidationError("Cannot modify year/month of a closed report month.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def close(self):
+        """Close the report month."""
+        if self.is_closed == True:
+            return
+        self.is_closed = True
+        self.closed_at = timezone.now()
+        self.save(update_fields=["is_closed", "closed_at"])
+
+    def reopen(self):
+        """Reopen the report month."""
+        if not self.is_closed:
+            return
+        self.is_closed = False
+        self.closed_at = None
+        self.save(update_fields=["is_closed", "closed_at"])
+
+    def __str__(self) -> str:
+        return f"{self.month:02d}/{self.year} {'(Closed)' if self.is_closed else ''}"
 
 
 class InvoiceVersion(models.Model):
@@ -56,6 +127,7 @@ class Invoice(models.Model):
         related_name="active_for_invoice",
         help_text="The currently active version of the invoice.",
     )
+    report_month = models.ForeignKey(ReportMonth, on_delete=models.PROTECT)  # ДОПИЛИ
 
     class Meta:
         verbose_name = "invoice"
@@ -64,9 +136,20 @@ class Invoice(models.Model):
         ordering = ["-date"]
 
     def clean(self):
-        pass
-
         super().clean()
+
+        if not self.report_month:
+            raise ValidationError({})
+
+        if self.report_month.is_closed:
+            raise ValidationError({})  # ДОПИЛИ
+
+        if (self.date.month, self.date.year) != (self.report_month.month, self.report_month.year):
+            raise ValidationError({})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def add_version(self, file):
         """
@@ -151,6 +234,7 @@ class InvoiceItem(models.Model):
         related_name="items",
         help_text="The invoice to which this item belongs.",
     )
+    is_unit_unknown = models.BooleanField(default=False)  # ДОПИЛИ
 
     class Meta:
         verbose_name = "invoice item"
@@ -164,3 +248,14 @@ class InvoiceItem(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
+
+
+# ДОПИЛИ
+class InvoiceParsingError(models.Model):
+    version = models.ForeignKey(InvoiceVersion, on_delete=models.PROTECT)
+    message = models.TextField()
+    row = models.IntegerField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        pass
