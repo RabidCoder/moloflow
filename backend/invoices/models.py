@@ -1,7 +1,7 @@
 from datetime import timezone
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db import models
+from django.db import models, transaction
 
 from core.constants import NAME_UNIT_MAX_LENGTH, NAME_MAX_LENGTH, SYMBOL_MAX_LENGTH
 from core.validators import validate_invoice_file
@@ -87,14 +87,12 @@ class InvoiceVersion(models.Model):
     file = models.FileField(
         "file",
         upload_to=invoice_file_path,
-        blank=True,
-        null=True,
         validators=[validate_invoice_file],
         help_text="Uploaded invoice file (excel).",
     )
     invoice = models.ForeignKey(
         "Invoice",
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="versions",
         help_text="The invoice to which this version belongs.",
     )
@@ -104,6 +102,45 @@ class InvoiceVersion(models.Model):
         verbose_name_plural = "invoice versions"
         unique_together = ("invoice", "version")
         ordering = ["-version"]
+
+    def clean(self):
+        super().clean()
+        # Validation logic
+        if not self.invoice:
+            raise ValidationError({"invoice": "Invoice must be set for the invoice version."})
+        # Ensure the file is provided
+        if not self.file:
+            raise ValidationError({"file": "File must be set for the invoice version."})
+        # Ensure version number is at least 1
+        if self.version < 1:
+            raise ValidationError({"version": "Version number must be at least 1."})
+
+    @property
+    def is_active(self) -> bool:
+        """Return True if this version is the active version of the invoice."""
+        return self.invoice.active_version_id == self.id
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if not self.pk:
+                # New version creation → check sequential version
+                last_version = (
+                    InvoiceVersion.objects.select_for_update()
+                    .filter(invoice=self.invoice)
+                    .aggregate(models.Max("version"))["version__max"]
+                ) or 0
+
+                if self.version != last_version + 1:
+                    raise ValidationError(
+                        f"Version must be sequential. Expected {last_version + 1}."
+                    )
+
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.invoice.active_version_id == self.id:
+            raise ValidationError("Cannot delete the active version of the invoice.")
+        return super().delete(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"Invoice #{self.invoice.number} - Version {self.version}"
