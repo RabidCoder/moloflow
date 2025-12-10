@@ -1,7 +1,7 @@
-from datetime import timezone
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, MaxLengthValidator
 from django.db import models, transaction
+from django.utils import timezone
 
 from core import constants
 from core.validators import validate_invoice_file
@@ -34,12 +34,6 @@ class ReportMonth(models.Model):
     def clean(self):
         super().clean()
 
-        today = timezone.now()
-        current_year = today.year
-        current_month = today.month
-        # Prevent setting a report month in the past
-        if (self.year < current_year) or (self.year == current_year and self.month < current_month):
-            raise ValidationError("Report month cannot be in the past.")
         # Prevent duplicate report months
         if (
             ReportMonth.objects.exclude(pk=self.pk)
@@ -307,21 +301,46 @@ class InvoiceItem(models.Model):
         verbose_name_plural = "invoice items"
         ordering = ["-version__invoice__date", "spare_part__name"]
 
-    def clean(self):
-        super().clean()
+    def save(self, *args, **kwargs):
+        self.full_clean()
+
         # If the measurement unit is not recognized (unit is None), mark this item as "unit unknown"
         self.is_unit_unknown = self.unit is None
+
+        return super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.spare_part.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
 
 
-# ДОПИЛИ
 class InvoiceParsingError(models.Model):
-    version = models.ForeignKey(InvoiceVersion, on_delete=models.PROTECT)
-    message = models.TextField()
-    row = models.IntegerField(null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    """Model representing an error encountered while parsing an invoice."""
+
+    message = models.TextField(
+        "message",
+        validators=[MaxLengthValidator(constants.MAX_ERROR_MESSAGE_LENGTH)],
+        help_text="Error message describing the parsing issue.",
+    )
+    row = models.PositiveIntegerField(
+        "row",
+        null=True,
+        help_text="Row number where error occurred, or NULL if the error is not row-specific.",
+    )
+    created_at = models.DateTimeField(
+        "created at", auto_now_add=True, help_text="Timestamp when the error was recorded."
+    )
+    version = models.ForeignKey(
+        InvoiceVersion,
+        on_delete=models.PROTECT,
+        verbose_name="invoice version",
+        related_name="parsing_errors",
+        help_text="The invoice version associated with this parsing error.",
+    )
 
     class Meta:
-        pass
+        verbose_name = "invoice parsing error"
+        verbose_name_plural = "invoice parsing errors"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Error in Invoice #{self.version.invoice.number} v{self.version.version}: {self.message[:50]}"
