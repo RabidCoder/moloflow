@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models, transaction
 
-from core.constants import NAME_UNIT_MAX_LENGTH, NAME_MAX_LENGTH, SYMBOL_MAX_LENGTH
+from core import constants
 from core.validators import validate_invoice_file
 from core.utils import invoice_file_path
 
@@ -12,10 +12,10 @@ class ReportMonth(models.Model):
     """Model representing a reporting month."""
 
     year = models.IntegerField(
-        validators=[MinValueValidator(2000)], help_text="Year of the report month."
+        validators=[MinValueValidator(constants.MIN_YEAR)], help_text="Year of the report month."
     )
     month = models.IntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        validators=[MinValueValidator(constants.MIN_MONTH), MaxValueValidator(constants.MAX_MONTH)],
         help_text="Month of the report month.",
     )
     is_closed = models.BooleanField(
@@ -151,7 +151,7 @@ class Invoice(models.Model):
 
     number = models.IntegerField(
         "number",
-        validators=[MinValueValidator(1)],
+        validators=[MinValueValidator(constants.MIN_INVOICE_NUMBER)],
         help_text="Invoice number as shown on the document.",
     )
     date = models.DateField("date", help_text="Date of the invoice.")
@@ -163,6 +163,13 @@ class Invoice(models.Model):
         verbose_name="active version",
         related_name="active_for_invoice",
         help_text="The currently active version of the invoice.",
+    )
+    company = models.ForeignKey(
+        "equipment.Company",
+        on_delete=models.PROTECT,
+        verbose_name="company",
+        related_name="invoices",
+        help_text="The company to which this invoice belongs.",
     )
     report_month = models.ForeignKey(
         ReportMonth,
@@ -223,10 +230,14 @@ class Unit(models.Model):
     """Model representing a measurement unit."""
 
     name = models.CharField(
-        "name", max_length=NAME_UNIT_MAX_LENGTH, help_text="Name of the unit (e.g., 'kilogram')."
+        "name",
+        max_length=constants.MAX_UNIT_NAME_LENGTH,
+        help_text="Name of the unit (e.g., 'kilogram').",
     )
     symbol = models.CharField(
-        "symbol", max_length=SYMBOL_MAX_LENGTH, help_text="Symbol of the unit (e.g., 'kg')."
+        "symbol",
+        max_length=constants.MAX_SYMBOL_LENGTH,
+        help_text="Symbol of the unit (e.g., 'kg').",
     )
     aliases = models.JSONField(
         "aliases",
@@ -257,14 +268,18 @@ class Unit(models.Model):
 class InvoiceItem(models.Model):
     """Model representing an item in an invoice."""
 
-    name = models.CharField(
-        "name", max_length=NAME_MAX_LENGTH, help_text="Item name as shown in the invoice."
+    spare_part = models.ForeignKey(
+        "equipment.SparePart",
+        on_delete=models.PROTECT,
+        verbose_name="spare part",
+        related_name="invoice_items",
+        help_text="The spare part associated with this invoice item.",
     )
     quantity = models.DecimalField(
         "quantity",
-        max_digits=10,
-        decimal_places=2,
-        validators=[MinValueValidator(0.01)],
+        max_digits=constants.MAX_DIGITS,
+        decimal_places=constants.DECIMAL_PLACES,
+        validators=[MinValueValidator(constants.MIN_QUANTITY)],
         help_text="Quantity of the item in the specified unit, with up to two decimal places.",
     )
     unit = models.ForeignKey(
@@ -276,29 +291,29 @@ class InvoiceItem(models.Model):
         related_name="used_in_items",
         help_text="Measurement unit of the item. Can be empty if not recognized.",
     )
+    is_unit_unknown = models.BooleanField(
+        "unit unknown", default=False, help_text="Indicates if the unit of the item is unknown."
+    )
     version = models.ForeignKey(
         InvoiceVersion,
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
         verbose_name="invoice",
         related_name="items",
         help_text="The invoice to which this item belongs.",
     )
-    is_unit_unknown = models.BooleanField(default=False)  # ДОПИЛИ
 
     class Meta:
         verbose_name = "invoice item"
         verbose_name_plural = "invoice items"
-        ordering = ["-invoice__date", "name"]
+        ordering = ["-version__invoice__date", "spare_part__name"]
 
     def clean(self):
-        pass
-
         super().clean()
+        # If the measurement unit is not recognized (unit is None), mark this item as "unit unknown"
+        self.is_unit_unknown = self.unit is None
 
     def __str__(self) -> str:
-        return f"{self.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
+        return f"{self.spare_part.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
 
 
 # ДОПИЛИ

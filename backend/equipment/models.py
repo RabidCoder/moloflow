@@ -1,3 +1,13 @@
 from django.db import models
 
-# Create your models here.
+
+class Company(models.Model):
+    pass
+
+
+class Equipment(models.Model):
+    pass
+
+
+class SparePart(models.Model):
+    pass
