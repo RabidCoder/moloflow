@@ -238,12 +238,17 @@ class Unit(models.Model):
     class Meta:
         verbose_name = "unit"
         verbose_name_plural = "units"
+        unique_together = ("name", "symbol")
         ordering = ["name"]
 
     def clean(self):
-        pass
-
         super().clean()
+        # Validation logic
+        if not self.symbol or not self.symbol.strip():
+            raise ValidationError({"symbol": "Unit symbol cannot be empty or just whitespace."})
+        # Validate aliases
+        if not all(isinstance(alias, str) and alias.strip() for alias in self.aliases):
+            raise ValidationError({"aliases": "All aliases must be non-empty strings."})
 
     def __str__(self) -> str:
         return f"{self.name} ({self.symbol})"
