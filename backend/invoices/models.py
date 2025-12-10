@@ -164,25 +164,33 @@ class Invoice(models.Model):
         related_name="active_for_invoice",
         help_text="The currently active version of the invoice.",
     )
-    report_month = models.ForeignKey(ReportMonth, on_delete=models.PROTECT)  # ДОПИЛИ
+    report_month = models.ForeignKey(
+        ReportMonth,
+        on_delete=models.PROTECT,
+        verbose_name="report month",
+        related_name="invoices",
+        help_text="The report month to which this invoice belongs.",
+    )
 
     class Meta:
         verbose_name = "invoice"
         verbose_name_plural = "invoices"
-        unique_together = ("number", "date")
+        unique_together = ("number", "report_month")
         ordering = ["-date"]
 
     def clean(self):
         super().clean()
-
+        # Validation logic
         if not self.report_month:
-            raise ValidationError({})
-
+            raise ValidationError({"report_month": "Report month must be set for the invoice."})
+        # Prevent modifications if the report month is closed
         if self.report_month.is_closed:
-            raise ValidationError({})  # ДОПИЛИ
-
+            raise ValidationError(
+                {"report_month": "Cannot modify invoice in a closed report month."}
+            )
+        # Ensure invoice date is within the report month
         if (self.date.month, self.date.year) != (self.report_month.month, self.report_month.year):
-            raise ValidationError({})
+            raise ValidationError({"date": "Invoice date must be within the report month."})
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -193,21 +201,22 @@ class Invoice(models.Model):
         Create a new version of this invoice with the given file.
         Automatically increments the version number and sets it as active.
         """
-        last_version = self.versions.order_by("-version").first()
-        next_num = (last_version.version + 1) if last_version else 1
+        with transaction.atomic():
+            last_version = self.versions.order_by("-version").first()
+            next_num = (last_version.version + 1) if last_version else 1
 
-        new_version = InvoiceVersion(invoice=self, version=next_num, file=file)
+            new_version = InvoiceVersion(invoice=self, version=next_num, file=file)
 
-        new_version.full_clean()
-        new_version.save()
+            new_version.full_clean()
+            new_version.save()
 
-        self.active_version = new_version
-        self.save(update_fields=["active_version"])
+            self.active_version = new_version
+            self.save(update_fields=["active_version"])
 
-        return new_version
+            return new_version
 
     def __str__(self) -> str:
-        return f"Invoice #{self.number} from {self.date}"
+        return f"Invoice #{self.number} from {self.date} (v{self.active_version.version if self.active_version else 'N/A'})"
 
 
 class Unit(models.Model):
