@@ -4,11 +4,12 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from core import constants
-from core.validators import validate_invoice_file
+from core.mixins import FullCleanSaveMixin
 from core.utils import invoice_file_path
+from core.validators import validate_invoice_file
 
 
-class ReportMonth(models.Model):
+class ReportMonth(FullCleanSaveMixin, models.Model):
     """Model representing a reporting month."""
 
     year = models.IntegerField(
@@ -31,9 +32,14 @@ class ReportMonth(models.Model):
         unique_together = ("year", "month")
         ordering = ["-year", "-month"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Store old values for year and month to prevent modifications on closed report months
+        self._old_year = self.year
+        self._old_month = self.month
+
     def clean(self):
         super().clean()
-
         # Prevent duplicate report months
         if (
             ReportMonth.objects.exclude(pk=self.pk)
@@ -41,15 +47,16 @@ class ReportMonth(models.Model):
             .exists()
         ):
             raise ValidationError("Report month for this year and month already exists.")
-        # Prevent modifications if the report month is closed
-        if self.pk:
-            old = ReportMonth.objects.get(pk=self.pk)
-            if old.is_closed and (self.year != old.year or self.month != old.month):
-                raise ValidationError("Cannot modify year/month of a closed report month.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        return super().save(*args, **kwargs)
+        # Check for modifications to locked fields
+        if (
+            not self._state.adding
+            and self.is_closed
+            and (self.year != self._old_year or self.month != self._old_month)
+        ):
+            raise ValidationError("Cannot modify year/month of a closed report month.")
+        super().save(*args, **kwargs)
 
     def close(self):
         """Close the report month."""
@@ -99,20 +106,12 @@ class InvoiceVersion(models.Model):
 
     def clean(self):
         super().clean()
-        # Validation logic
-        if not self.invoice:
-            raise ValidationError({"invoice": "Invoice must be set for the invoice version."})
         # Ensure the file is provided
         if not self.file:
             raise ValidationError({"file": "File must be set for the invoice version."})
         # Ensure version number is at least 1
         if self.version < 1:
             raise ValidationError({"version": "Version number must be at least 1."})
-
-    @property
-    def is_active(self) -> bool:
-        """Return True if this version is the active version of the invoice."""
-        return self.invoice.active_version_id == self.id
 
     def save(self, *args, **kwargs):
         with transaction.atomic():
@@ -136,11 +135,28 @@ class InvoiceVersion(models.Model):
             raise ValidationError("Cannot delete the active version of the invoice.")
         return super().delete(*args, **kwargs)
 
+    @classmethod
+    def create_next(cls, invoice, file):
+        """Create the next version of the given invoice with the provided file."""
+        with transaction.atomic():
+            last = (
+                cls.objects.select_for_update()
+                .filter(invoice=invoice)
+                .aggregate(models.Max("version"))
+            )["version__max"] or 0
+
+            return cls.objects.create(invoice=invoice, version=last + 1, file=file)
+
+    @property
+    def is_active(self) -> bool:
+        """Return True if this version is the active version of the invoice."""
+        return self.invoice.active_version_id == self.id
+
     def __str__(self) -> str:
         return f"Invoice #{self.invoice.number} - Version {self.version}"
 
 
-class Invoice(models.Model):
+class Invoice(FullCleanSaveMixin, models.Model):
     """Model representing an invoice."""
 
     number = models.IntegerField(
@@ -179,6 +195,11 @@ class Invoice(models.Model):
         unique_together = ("number", "report_month")
         ordering = ["-date"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Store old values for year and month to prevent changing report month if versions exist
+        self._old_report_month = self.report_month
+
     def clean(self):
         super().clean()
         # Validation logic
@@ -194,27 +215,19 @@ class Invoice(models.Model):
             raise ValidationError({"date": "Invoice date must be within the report month."})
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        return super().save(*args, **kwargs)
+        if (
+            not self._state.adding
+            and self.report_month != self._old_report_month
+            and self.versions.exists()
+        ):
+            raise ValidationError("Cannot modify report month if versions exist.")
+        super().save(*args, **kwargs)
 
     def add_version(self, file):
         """
         Create a new version of this invoice with the given file.
-        Automatically increments the version number and sets it as active.
         """
-        with transaction.atomic():
-            last_version = self.versions.order_by("-version").first()
-            next_num = (last_version.version + 1) if last_version else 1
-
-            new_version = InvoiceVersion(invoice=self, version=next_num, file=file)
-
-            new_version.full_clean()
-            new_version.save()
-
-            self.active_version = new_version
-            self.save(update_fields=["active_version"])
-
-            return new_version
+        return InvoiceVersion.create_next(self, file)
 
     def __str__(self) -> str:
         return f"Invoice #{self.number} from {self.date} (v{self.active_version.version if self.active_version else 'N/A'})"
@@ -259,7 +272,7 @@ class Unit(models.Model):
         return f"{self.name} ({self.symbol})"
 
 
-class InvoiceItem(models.Model):
+class InvoiceItem(FullCleanSaveMixin, models.Model):
     """Model representing an item in an invoice."""
 
     spare_part = models.ForeignKey(
@@ -285,9 +298,6 @@ class InvoiceItem(models.Model):
         related_name="used_in_items",
         help_text="Measurement unit of the item. Can be empty if not recognized.",
     )
-    is_unit_unknown = models.BooleanField(
-        "unit unknown", default=False, help_text="Indicates if the unit of the item is unknown."
-    )
     version = models.ForeignKey(
         InvoiceVersion,
         on_delete=models.PROTECT,
@@ -301,13 +311,10 @@ class InvoiceItem(models.Model):
         verbose_name_plural = "invoice items"
         ordering = ["-version__invoice__date", "spare_part__name"]
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-
-        # If the measurement unit is not recognized (unit is None), mark this item as "unit unknown"
-        self.is_unit_unknown = self.unit is None
-
-        return super().save(*args, **kwargs)
+    @property
+    def is_unit_unknown(self) -> bool:
+        """Return True if the unit is unknown (i.e., unit is None)."""
+        return self.unit is None
 
     def __str__(self) -> str:
         return f"{self.spare_part.name} - {self.quantity} {self.unit.symbol if self.unit else ''}"
@@ -341,6 +348,7 @@ class InvoiceParsingError(models.Model):
         verbose_name = "invoice parsing error"
         verbose_name_plural = "invoice parsing errors"
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["version"]), models.Index(fields=["created_at"])]
 
     def __str__(self) -> str:
         return f"Error in Invoice #{self.version.invoice.number} v{self.version.version}: {self.message[:50]}"
