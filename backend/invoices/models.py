@@ -29,8 +29,13 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
     class Meta:
         verbose_name = "report month"
         verbose_name_plural = "report months"
-        unique_together = ("year", "month")
         ordering = ["-year", "-month"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["year", "month"],
+                name="uniq_report_month_year_month",
+            ),
+        ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -101,8 +106,13 @@ class InvoiceVersion(models.Model):
     class Meta:
         verbose_name = "invoice version"
         verbose_name_plural = "invoice versions"
-        unique_together = ("invoice", "version")
         ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["invoice", "version"],
+                name="uniq_invoice_version_per_invoice",
+            ),
+        ]
 
     def clean(self):
         super().clean()
@@ -192,8 +202,13 @@ class Invoice(FullCleanSaveMixin, models.Model):
     class Meta:
         verbose_name = "invoice"
         verbose_name_plural = "invoices"
-        unique_together = ("number", "report_month")
         ordering = ["-date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["number", "report_month"],
+                name="uniq_invoice_number_per_report_month",
+            ),
+        ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -256,8 +271,13 @@ class Unit(models.Model):
     class Meta:
         verbose_name = "unit"
         verbose_name_plural = "units"
-        unique_together = ("name", "symbol")
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name", "symbol"],
+                name="uniq_unit_name_symbol",
+            ),
+        ]
 
     def clean(self):
         super().clean()
