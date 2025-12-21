@@ -238,7 +238,7 @@ class Unit(models.Model):
 
     name = models.CharField(
         "name",
-        max_length=constants.MAX_UNIT_NAME_LENGTH,
+        max_length=constants.MAX_NAME_LENGTH,
         help_text="Name of the unit (e.g., 'kilogram').",
     )
     symbol = models.CharField(
