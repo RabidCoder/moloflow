@@ -372,3 +372,84 @@ class InvoiceParsingError(models.Model):
 
     def __str__(self) -> str:
         return f"Error in Invoice #{self.version.invoice.number} v{self.version.version}: {self.message[:50]}"
+
+
+class WriteOffFact(models.Model):
+    """Model representing a write-off fact for a spare part."""
+
+    # main fields
+    spare_part = models.ForeignKey(
+        "equipment.SparePart",
+        on_delete=models.PROTECT,
+        related_name="write_off_facts",
+        verbose_name="spare part",
+        help_text="The spare part that was written off.",
+    )
+    quantity = models.DecimalField(
+        "quantity",
+        max_digits=constants.MAX_DIGITS,
+        decimal_places=constants.DECIMAL_PLACES,
+        help_text="Quantity of spare parts written off.",
+    )
+    fact_date = models.DateField("fact date", help_text="Date when the write-off occurred.")
+    # snapshot fields
+    equipment_name = models.CharField(
+        "equipment name",
+        max_length=constants.MAX_NAME_LENGTH,
+        help_text="Name of the equipment at the time of write-off.",
+    )
+    equipment_inventory_number = models.CharField(
+        "inventory number",
+        max_length=constants.MAX_NAME_LENGTH,
+        help_text="Inventory number of the equipment at the time of write-off.",
+    )
+    equipment_sequence_number = models.PositiveSmallIntegerField(
+        "sequence number", help_text="Sequence number of the equipment at the time of write-off."
+    )
+    equipment_company_name = models.CharField(
+        "company name",
+        max_length=constants.MAX_NAME_LENGTH,
+        help_text="Company owning the equipment at the time of write-off.",
+    )
+    # metadata fields
+    invoice_item = models.ForeignKey(
+        InvoiceItem,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="write_off_facts",
+        verbose_name="invoice item",
+        help_text="Optional invoice item that was the source of this write-off.",
+    )
+    report_month = models.ForeignKey(
+        ReportMonth,
+        on_delete=models.PROTECT,
+        related_name="write_off_facts",
+        verbose_name="report month",
+        help_text="The report month to which this fact belongs.",
+    )
+    created_at = models.DateTimeField(
+        "created at", auto_now_add=True, help_text="Timestamp when the write-off fact was created."
+    )
+    # Source
+    source = models.CharField(
+        "source",
+        max_length=constants.MAX_SYMBOL_LENGTH,
+        choices=constants.SOURCE_CHOICES,
+        help_text="Source of the write-off: invoice or manual entry.",
+    )
+    status = models.CharField(
+        "status",
+        max_length=constants.MAX_SYMBOL_LENGTH,
+        choices=constants.STATUS_CHOICES,
+        default="active",
+        help_text="Status of the write-off fact for corrections.",
+    )
+
+    class Meta:
+        verbose_name = "write-off fact"
+        verbose_name_plural = "write-off facts"
+        ordering = ["-fact_date"]
+
+    def __str__(self) -> str:
+        return f"{self.spare_part.name} - {self.quantity} pcs on {self.fact_date} ({self.status})"

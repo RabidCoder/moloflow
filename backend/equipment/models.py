@@ -66,9 +66,11 @@ class Equipment(BaseModel):
 class SparePart(BaseModel):
     """Model representing a spare part for equipment."""
 
-    unit = models.CharField(
-        "unit",
-        max_length=constants.MAX_SYMBOL_LENGTH,
+    unit = models.ForeignKey(
+        "invoices.Unit",
+        on_delete=models.PROTECT,
+        verbose_name="unit",
+        related_name="spare_parts",
         help_text="Unit of measurement for the spare part.",
     )
     company = models.ForeignKey(

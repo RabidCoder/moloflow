@@ -14,3 +14,11 @@ MIN_INVOICE_NUMBER = 1
 MIN_MONTH = 1
 MIN_QUANTITY = 0.01
 MIN_YEAR = 2000
+SOURCE_CHOICES = [
+    ("invoice", "Invoice"),
+    ("manual", "Manual"),
+]
+STATUS_CHOICES = [
+    ("active", "Active"),
+    ("cancelled", "Cancelled"),
+]
