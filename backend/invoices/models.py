@@ -453,3 +453,26 @@ class WriteOffFact(models.Model):
 
     def __str__(self) -> str:
         return f"{self.spare_part.name} - {self.quantity} pcs on {self.fact_date} ({self.status})"
+
+    def cancel(self):
+        """Cancel this write-off fact."""
+        if self.status == "canceled":
+            return
+        self.status = "canceled"
+        self.save(update_fields=["status"])
+
+    def clone_as_manual(self, *, quantity, fact_date, equipment_snapshot):
+        """Clone this write-off fact as a manual entry with updated fields."""
+        return WriteOffFact.objects.create(
+            spare_part=self.spare_part,
+            quantity=quantity,
+            fact_date=fact_date,
+            equipment_name=equipment_snapshot.name,
+            equipment_inventory_number=equipment_snapshot.inventory_number,
+            equipment_sequence_number=equipment_snapshot.sequence_number,
+            equipment_company_name=equipment_snapshot.company_name,
+            invoice_item=None,
+            report_month=self.report_month,
+            source="manual",
+            status="active",
+        )
