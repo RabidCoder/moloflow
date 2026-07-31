@@ -1,0 +1,6 @@
+Django==5.2.16
+django-environ
+xlrd
+openpyxl
+python-magic
+
