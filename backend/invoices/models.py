@@ -7,23 +7,58 @@ from core import constants
 from core.mixins import FullCleanSaveMixin
 from core.utils import invoice_file_path
 from core.validators import validate_invoice_file
+from core.constants import MAX_STATUS_LENGTH
 
 
 class ReportMonth(FullCleanSaveMixin, models.Model):
     """Model representing a reporting month."""
 
+    class StatusOption(models.TextChoices):
+        """
+        Statuses representing the lifecycle of a reporting month.
+
+        OPEN:
+            Active reporting period. New invoices are automatically assigned
+            to this period. Manual corrections and closing are allowed.
+
+        CLOSED:
+            Completed reporting period. New data cannot be added automatically.
+            The period can be reopened for corrections or restored as the active
+            reporting period.
+
+        EDITING:
+            Previously closed reporting period opened for corrections.
+            New invoices are not assigned to this period. Manual changes are
+            allowed before closing again.
+        """
+
+        OPEN = "open", "Открыт"
+        CLOSED = "closed", "Закрыт"
+        EDITING = "editing", "На редакции"
+
     year = models.IntegerField(
-        validators=[MinValueValidator(constants.MIN_YEAR)], help_text="Year of the report month."
+        validators=[MinValueValidator(constants.MIN_YEAR)],
+        help_text="Year of the reporting period.",
     )
     month = models.IntegerField(
         validators=[MinValueValidator(constants.MIN_MONTH), MaxValueValidator(constants.MAX_MONTH)],
-        help_text="Month of the report month.",
+        help_text="Month of the reporting period.",
     )
-    is_closed = models.BooleanField(
-        default=False, help_text="Indicates whether the report month is closed."
+    status = models.CharField(
+        max_length=MAX_STATUS_LENGTH,
+        choices=StatusOption,
+        default=StatusOption.OPEN,
+        help_text="Current status of the reporting period.",
     )
     closed_at = models.DateTimeField(
-        null=True, blank=True, help_text="Timestamp when the report month was closed."
+        null=True, blank=True, help_text="Date and time when the reporting period was first closed."
+    )
+    start_date = models.DateField(help_text="First day of the reporting period.")
+    end_date = models.DateField(
+        null=True, blank=True, help_text="Last day of the reporting period."
+    )
+    last_modified = models.DateTimeField(
+        auto_now=True, help_text="Date and time of the last modification."
     )
 
     class Meta:
@@ -37,50 +72,60 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
             ),
         ]
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Store old values for year and month to prevent modifications on closed report months
-        self._old_year = self.year
-        self._old_month = self.month
+    # def save(self, *args, **kwargs):
+    #     # Check for modifications to locked fields
+    #     if (
+    #         not self._state.adding
+    #         and self.is_closed
+    #         and (self.year != self._old_year or self.month != self._old_month)
+    #     ):
+    #         raise ValidationError("Cannot modify year/month of a closed report month.")
+    #     super().save(*args, **kwargs)
+
+    # def close(self):
+    #     """Close the report month."""
+    #     if self.is_closed == True:
+    #         return
+    #     self.is_closed = True
+    #     self.closed_at = timezone.now()
+    #     self.save(update_fields=["is_closed", "closed_at"])
+
+    # def reopen(self):
+    #     """Reopen the report month."""
+    #     if not self.is_closed:
+    #         return
+    #     self.is_closed = False
+    #     self.closed_at = None
+    #     self.save(update_fields=["is_closed", "closed_at"])
+
+    # def __str__(self) -> str:
+    #     return f"{self.month:02d}/{self.year} {'(Closed)' if self.is_closed else ''}"
 
     def clean(self):
         super().clean()
-        # Prevent duplicate report months
-        if (
-            ReportMonth.objects.exclude(pk=self.pk)
-            .filter(year=self.year, month=self.month)
-            .exists()
-        ):
-            raise ValidationError("Report month for this year and month already exists.")
+
+        # An open reporting period cannot have closing information.
+        # Closing dates are assigned only after the period is closed.
+        if self.status == self.StatusOption.OPEN:
+            if self.end_date or self.closed_at:
+                raise ValidationError(
+                    "An open reporting period cannot have an end date or closing timestamp."
+                )
+
+        # Closed and editing periods represent periods that were already closed.
+        # They must preserve the closing date and closing timestamp.
+        else:
+            if not self.end_date or not self.closed_at:
+                raise ValidationError(
+                    "Closed or editing reporting periods must have an end date and closing timestamp."
+                )
+
+        # The reporting period cannot end before it starts.
+        if self.end_date and self.end_date < self.start_date:
+            raise ValidationError("The end date cannot be earlier than the start date.")
 
     def save(self, *args, **kwargs):
-        # Check for modifications to locked fields
-        if (
-            not self._state.adding
-            and self.is_closed
-            and (self.year != self._old_year or self.month != self._old_month)
-        ):
-            raise ValidationError("Cannot modify year/month of a closed report month.")
-        super().save(*args, **kwargs)
-
-    def close(self):
-        """Close the report month."""
-        if self.is_closed == True:
-            return
-        self.is_closed = True
-        self.closed_at = timezone.now()
-        self.save(update_fields=["is_closed", "closed_at"])
-
-    def reopen(self):
-        """Reopen the report month."""
-        if not self.is_closed:
-            return
-        self.is_closed = False
-        self.closed_at = None
-        self.save(update_fields=["is_closed", "closed_at"])
-
-    def __str__(self) -> str:
-        return f"{self.month:02d}/{self.year} {'(Closed)' if self.is_closed else ''}"
+        return super().save(*args, **kwargs)
 
 
 class InvoiceVersion(models.Model):
@@ -141,7 +186,7 @@ class InvoiceVersion(models.Model):
             super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.invoice.active_version_id == self.id:
+        if self.invoice.active_version_id == self.pk:
             raise ValidationError("Cannot delete the active version of the invoice.")
         return super().delete(*args, **kwargs)
 
@@ -160,7 +205,7 @@ class InvoiceVersion(models.Model):
     @property
     def is_active(self) -> bool:
         """Return True if this version is the active version of the invoice."""
-        return self.invoice.active_version_id == self.id
+        return self.invoice.active_version_id == self.pk
 
     def __str__(self) -> str:
         return f"Invoice #{self.invoice.number} - Version {self.version}"
