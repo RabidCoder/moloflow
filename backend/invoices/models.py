@@ -72,23 +72,15 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
             ),
         ]
 
-    # def save(self, *args, **kwargs):
-    #     # Check for modifications to locked fields
-    #     if (
-    #         not self._state.adding
-    #         and self.is_closed
-    #         and (self.year != self._old_year or self.month != self._old_month)
-    #     ):
-    #         raise ValidationError("Cannot modify year/month of a closed report month.")
-    #     super().save(*args, **kwargs)
-
-    # def close(self):
-    #     """Close the report month."""
-    #     if self.is_closed == True:
-    #         return
-    #     self.is_closed = True
-    #     self.closed_at = timezone.now()
-    #     self.save(update_fields=["is_closed", "closed_at"])
+    def close(self):
+        """Close the reporting period, recording closing information only on first closure."""
+        if self.status == self.StatusOption.CLOSED:
+            return
+        elif self.status == self.StatusOption.OPEN:
+            self.closed_at = timezone.now()
+            self.end_date = self.closed_at.date()
+        self.status = self.StatusOption.CLOSED
+        self.save()
 
     # def reopen(self):
     #     """Reopen the report month."""
