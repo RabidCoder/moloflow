@@ -72,27 +72,6 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
             ),
         ]
 
-    def close(self):
-        """Close the reporting period, recording closing information only on first closure."""
-        if self.status == self.StatusOption.CLOSED:
-            return
-        elif self.status == self.StatusOption.OPEN:
-            self.closed_at = timezone.now()
-            self.end_date = self.closed_at.date()
-        self.status = self.StatusOption.CLOSED
-        self.save()
-
-    # def reopen(self):
-    #     """Reopen the report month."""
-    #     if not self.is_closed:
-    #         return
-    #     self.is_closed = False
-    #     self.closed_at = None
-    #     self.save(update_fields=["is_closed", "closed_at"])
-
-    # def __str__(self) -> str:
-    #     return f"{self.month:02d}/{self.year} {'(Closed)' if self.is_closed else ''}"
-
     def clean(self):
         super().clean()
 
@@ -116,8 +95,27 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
         if self.end_date and self.end_date < self.start_date:
             raise ValidationError("The end date cannot be earlier than the start date.")
 
-    def save(self, *args, **kwargs):
-        return super().save(*args, **kwargs)
+    def close(self):
+        """Close the reporting period, recording closing information only on first closure."""
+        if self.status == self.StatusOption.CLOSED:
+            return
+        elif self.status == self.StatusOption.OPEN:
+            self.closed_at = timezone.now()
+            self.end_date = self.closed_at.date()
+        self.status = self.StatusOption.CLOSED
+        self.save()
+
+    def start_editing(self):
+        """Move a closed reporting period to the editing state."""
+        if self.status == self.StatusOption.EDITING:
+            return
+        elif self.status == self.StatusOption.OPEN:
+            raise ValidationError("An open reporting period cannot be moved to editing.")
+        self.status = self.StatusOption.EDITING
+        self.save()
+
+    def __str__(self) -> str:
+        return f"{self.month:02d}/{self.year} ({self.get_status_display()})"
 
 
 class InvoiceVersion(models.Model):
