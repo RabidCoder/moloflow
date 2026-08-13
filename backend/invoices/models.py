@@ -70,6 +70,11 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
                 fields=["year", "month"],
                 name="uniq_report_month_year_month",
             ),
+            models.UniqueConstraint(
+                fields=["status"],
+                condition=models.Q(status="open"),
+                name="uniq_open_report_month",
+            ),
         ]
 
     def clean(self):
