@@ -37,6 +37,7 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
         EDITING = "editing", "На редакции"
 
     year = models.IntegerField(
+        default=lambda: timezone.now().year,
         validators=[MinValueValidator(constants.MIN_YEAR)],
         help_text="Year of the reporting period.",
     )
@@ -96,9 +97,13 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
                     "Closed or editing reporting periods must have an end date and closing timestamp."
                 )
 
-        # The reporting period cannot end before it starts.
-        if self.end_date and self.end_date < self.start_date:
-            raise ValidationError("The end date cannot be earlier than the start date.")
+            # The end date must match the calendar date when the period was closed.
+            if self.end_date != self.closed_at.date():
+                raise ValidationError("The end date must match the closing date.")
+
+            # The reporting period cannot end before it starts.
+            if self.end_date and self.end_date < self.start_date:
+                raise ValidationError("The end date cannot be earlier than the start date.")
 
     def close(self):
         """Close the reporting period, recording closing information only on first closure."""

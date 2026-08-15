@@ -28,7 +28,7 @@ class UnitAdmin(admin.ModelAdmin):
 
 
 class ReportMonthAdmin(admin.ModelAdmin):
-    pass
+    readonly_fields = ("year", "status", "closed_at", "end_date")
 
 
 class InvoiceParsingErrorAdmin(admin.ModelAdmin):
