@@ -1,3 +1,4 @@
+from django import core
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator, MaxLengthValidator
 from django.db import models, transaction
@@ -7,7 +8,11 @@ from core import constants
 from core.mixins import FullCleanSaveMixin
 from core.utils import invoice_file_path
 from core.validators import validate_invoice_file
-from core.constants import MAX_STATUS_LENGTH
+
+
+def current_year():
+    """Return the current calendar year."""
+    return timezone.now().year
 
 
 class ReportMonth(FullCleanSaveMixin, models.Model):
@@ -37,34 +42,40 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
         EDITING = "editing", "На редакции"
 
     year = models.IntegerField(
-        default=lambda: timezone.now().year,
+        "год",
+        default=current_year(),
         validators=[MinValueValidator(constants.MIN_YEAR)],
-        help_text="Year of the reporting period.",
+        help_text="Год отчётного периода.",
     )
     month = models.IntegerField(
+        "месяц",
         validators=[MinValueValidator(constants.MIN_MONTH), MaxValueValidator(constants.MAX_MONTH)],
-        help_text="Month of the reporting period.",
+        help_text="Месяц отчётного периода.",
     )
     status = models.CharField(
-        max_length=MAX_STATUS_LENGTH,
+        "статус",
+        max_length=constants.MAX_STATUS_LENGTH,
         choices=StatusOption,
         default=StatusOption.OPEN,
-        help_text="Current status of the reporting period.",
+        help_text="Текущий статус отчётного периода.",
     )
     closed_at = models.DateTimeField(
-        null=True, blank=True, help_text="Date and time when the reporting period was first closed."
+        "дата закрытия",
+        null=True,
+        blank=True,
+        help_text="Дата и время первого закрытия отчётного периода.",
     )
-    start_date = models.DateField(help_text="First day of the reporting period.")
+    start_date = models.DateField("дата начала", help_text="Первый день отчётного периода.")
     end_date = models.DateField(
-        null=True, blank=True, help_text="Last day of the reporting period."
+        "дата окончания", null=True, blank=True, help_text="Последний день отчётного периода."
     )
     last_modified = models.DateTimeField(
-        auto_now=True, help_text="Date and time of the last modification."
+        "изменено", auto_now=True, help_text="Дата и время последнего изменения."
     )
 
     class Meta:
-        verbose_name = "report month"
-        verbose_name_plural = "report months"
+        verbose_name = "отчётный период"
+        verbose_name_plural = "отчётные периоды"
         ordering = ["-year", "-month"]
         constraints = [
             models.UniqueConstraint(
@@ -131,26 +142,34 @@ class ReportMonth(FullCleanSaveMixin, models.Model):
 class InvoiceVersion(models.Model):
     """Model representing a version of an invoice."""
 
-    version = models.PositiveIntegerField(help_text="Version number of the invoice.")
+    version = models.PositiveIntegerField("версия", help_text="Порядковый номер версии накладной.")
     created_at = models.DateTimeField(
-        auto_now_add=True, help_text="Timestamp when this version was created."
+        "создано", auto_now_add=True, help_text="Дата и время создания версии."
     )
     file = models.FileField(
-        "file",
+        "файл",
         upload_to=invoice_file_path,
         validators=[validate_invoice_file],
-        help_text="Uploaded invoice file (excel).",
+        help_text="Файл накладной в формате Excel.",
     )
     invoice = models.ForeignKey(
         "Invoice",
         on_delete=models.PROTECT,
+        verbose_name="накладная",
         related_name="versions",
-        help_text="The invoice to which this version belongs.",
+        help_text="Накладная, к которой относится эта версия.",
+    )
+    warehouse_keeper = models.CharField(
+        "кладовщик",
+        max_length=constants.MAX_NAME_LENGTH,
+        null=True,
+        blank=True,
+        help_text="ФИО кладовщика, указанное в накладной.",
     )
 
     class Meta:
-        verbose_name = "invoice version"
-        verbose_name_plural = "invoice versions"
+        verbose_name = "версия накладной"
+        verbose_name_plural = "версии накладных"
         ordering = ["-version"]
         constraints = [
             models.UniqueConstraint(
@@ -215,43 +234,43 @@ class Invoice(FullCleanSaveMixin, models.Model):
     """Model representing an invoice."""
 
     number = models.IntegerField(
-        "number",
+        "номер",
         validators=[MinValueValidator(constants.MIN_INVOICE_NUMBER)],
-        help_text="Invoice number as shown on the document.",
+        help_text="Номер накладной, указанный в документе.",
     )
-    date = models.DateField("date", help_text="Date of the invoice.")
+    date = models.DateField("дата", help_text="Дата накладной, указанная в документе.")
     active_version = models.ForeignKey(
         InvoiceVersion,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        verbose_name="active version",
+        verbose_name="активная версия",
         related_name="active_for_invoice",
-        help_text="The currently active version of the invoice.",
+        help_text="Текущая активная версия накладной.",
     )
     company = models.ForeignKey(
         "equipment.Company",
         on_delete=models.PROTECT,
-        verbose_name="company",
+        verbose_name="компания",
         related_name="invoices",
-        help_text="The company to which this invoice belongs.",
+        help_text="Компания, к которой относится накладная.",
     )
     report_month = models.ForeignKey(
         ReportMonth,
         on_delete=models.PROTECT,
-        verbose_name="report month",
+        verbose_name="отчётный период",
         related_name="invoices",
-        help_text="The report month to which this invoice belongs.",
+        help_text="Отчётный период, к которому относится накладная.",
     )
 
     class Meta:
-        verbose_name = "invoice"
-        verbose_name_plural = "invoices"
+        verbose_name = "накладная"
+        verbose_name_plural = "накладные"
         ordering = ["-date"]
         constraints = [
             models.UniqueConstraint(
-                fields=["number", "report_month"],
-                name="uniq_invoice_number_per_report_month",
+                fields=["number", "date", "company"],
+                name="uniq_invoice_number_date_per_company",
             ),
         ]
 
@@ -343,37 +362,72 @@ class InvoiceItem(FullCleanSaveMixin, models.Model):
     spare_part = models.ForeignKey(
         "equipment.SparePart",
         on_delete=models.PROTECT,
-        verbose_name="spare part",
+        verbose_name="запчасть",
         related_name="invoice_items",
-        help_text="The spare part associated with this invoice item.",
+        help_text="Запчасть, указанная в строке накладной.",
     )
-    quantity = models.DecimalField(
-        "quantity",
+    nomenclature_number = models.CharField(
+        "номенклатурный номер",
+        max_length=constants.MAX_CODE_LENGTH,
+        null=True,
+        blank=True,
+        help_text="Номенклатурный номер запчасти, указанный в документе.",
+    )
+    requested_quantity = models.DecimalField(
+        "затребованное количество",
         max_digits=constants.MAX_DIGITS,
         decimal_places=constants.DECIMAL_PLACES,
         validators=[MinValueValidator(constants.MIN_QUANTITY)],
-        help_text="Quantity of the item in the specified unit, with up to two decimal places.",
+        help_text="Количество запчасти, указанное в колонке «Затребовано».",
+    )
+    released_quantity = models.DecimalField(
+        "отпущенное количество",
+        max_digits=constants.MAX_DIGITS,
+        decimal_places=constants.DECIMAL_PLACES,
+        validators=[MinValueValidator(constants.MIN_QUANTITY)],
+        help_text="Фактически отпущенное количество запчасти.",
     )
     unit = models.ForeignKey(
         Unit,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        verbose_name="unit",
+        verbose_name="единица измерения",
         related_name="used_in_items",
-        help_text="Measurement unit of the item. Can be empty if not recognized.",
+        help_text="Единица измерения запчасти.",
+    )
+    unit_code = models.CharField(
+        "код единицы измерения",
+        max_length=constants.MAX_CODE_LENGTH,
+        null=True,
+        blank=True,
+        help_text="Код единицы измерения, указанный в документе.",
+    )
+    unit_price = models.DecimalField(
+        "цена за единицу",
+        max_digits=constants.MAX_DIGITS,
+        decimal_places=constants.DECIMAL_PLACES,
+        validators=[MinValueValidator(constants.MIN_PRICE)],
+        help_text="Цена одной единицы запчасти, указанная в документе.",
+    )
+    total_price = models.DecimalField(
+        "сумма",
+        max_digits=constants.MAX_DIGITS,
+        decimal_places=constants.DECIMAL_PLACES,
+        validators=[MinValueValidator(constants.MIN_PRICE)],
+        help_text="Общая сумма по строке накладной.",
     )
     version = models.ForeignKey(
         InvoiceVersion,
         on_delete=models.PROTECT,
-        verbose_name="invoice",
+        verbose_name="версия накладной",
         related_name="items",
-        help_text="The invoice to which this item belongs.",
+        help_text="Версия накладной, из которой была получена эта строка.",
     )
 
     class Meta:
-        verbose_name = "invoice item"
-        verbose_name_plural = "invoice items"
+        verbose_name = "строка накладной"
+        verbose_name_plural = "строки накладной"
         ordering = ["-version__invoice__date", "spare_part__name"]
 
     @property
